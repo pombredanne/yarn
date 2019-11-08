@@ -2,14 +2,11 @@
 /* eslint quotes: 0 */
 
 import util from 'util';
-import invariant from 'invariant';
-import stripBOM from 'strip-bom';
 
-import {LOCKFILE_VERSION} from '../constants.js';
 import {MessageError} from '../errors.js';
 import map from '../util/map.js';
 
-const {safeLoad, FAILSAFE_SCHEMA} = require('js-yaml');
+const LOCKFILE_VERSION = 1
 
 type Token = {
   line: number,
@@ -178,7 +175,6 @@ class Parser {
 
   onComment(token: Token) {
     const value = token.value;
-    invariant(typeof value === 'string', 'expected token value to be a string');
 
     const comment = value.trim();
 
@@ -187,8 +183,7 @@ class Parser {
       const version = +versionMatch[1];
       if (version > LOCKFILE_VERSION) {
         throw new MessageError(
-          `Can't install from a lockfile of version ${version} as you're on an old yarn version that only supports ` +
-            `versions up to ${LOCKFILE_VERSION}. Run \`$ yarn self-update\` to upgrade to the latest version.`,
+          `Unknown new lockfile format version ${version}. Supports versions are up to ${LOCKFILE_VERSION}.`,
         );
       }
     }
@@ -198,7 +193,6 @@ class Parser {
 
   next(): Token {
     const item = this.tokens.next();
-    invariant(item, 'expected a token');
 
     const {done, value} = item;
     if (done || !value) {
@@ -268,7 +262,6 @@ class Parser {
       } else if (propToken.type === TOKEN_TYPES.string) {
         // property key
         const key = propToken.value;
-        invariant(key, 'Expected a key');
 
         const keys = [key];
         this.next();
@@ -283,7 +276,6 @@ class Parser {
           }
 
           const key = keyToken.value;
-          invariant(key, 'Expected a key');
           keys.push(key);
           this.next();
         }
@@ -323,97 +315,16 @@ class Parser {
   }
 }
 
-const MERGE_CONFLICT_ANCESTOR = '|||||||';
-const MERGE_CONFLICT_END = '>>>>>>>';
-const MERGE_CONFLICT_SEP = '=======';
-const MERGE_CONFLICT_START = '<<<<<<<';
-
-/**
- * Extract the two versions of the lockfile from a merge conflict.
- */
-function extractConflictVariants(str: string): [string, string] {
-  const variants = [[], []];
-  const lines = str.split(/\r?\n/g);
-  let skip = false;
-
-  while (lines.length) {
-    const line = lines.shift();
-    if (line.startsWith(MERGE_CONFLICT_START)) {
-      // get the first variant
-      while (lines.length) {
-        const conflictLine = lines.shift();
-        if (conflictLine === MERGE_CONFLICT_SEP) {
-          skip = false;
-          break;
-        } else if (skip || conflictLine.startsWith(MERGE_CONFLICT_ANCESTOR)) {
-          skip = true;
-          continue;
-        } else {
-          variants[0].push(conflictLine);
-        }
-      }
-
-      // get the second variant
-      while (lines.length) {
-        const conflictLine = lines.shift();
-        if (conflictLine.startsWith(MERGE_CONFLICT_END)) {
-          break;
-        } else {
-          variants[1].push(conflictLine);
-        }
-      }
-    } else {
-      variants[0].push(line);
-      variants[1].push(line);
-    }
-  }
-
-  return [variants[0].join('\n'), variants[1].join('\n')];
-}
-
-/**
- * Check if a lockfile has merge conflicts.
- */
-function hasMergeConflicts(str: string): boolean {
-  return str.includes(MERGE_CONFLICT_START) && str.includes(MERGE_CONFLICT_SEP) && str.includes(MERGE_CONFLICT_END);
-}
-
 /**
  * Parse the lockfile.
  */
 function parse(str: string, fileLoc: string): Object {
   const parser = new Parser(str, fileLoc);
   parser.next();
-  try {
-    return parser.parse();
-  } catch (error1) {
-    try {
-      return safeLoad(str, {
-        schema: FAILSAFE_SCHEMA,
-      });
-    } catch (error2) {
-      throw error1;
-    }
-  }
+  return parser.parse();
 }
 
-/**
- * Parse and merge the two variants in a conflicted lockfile.
- */
-function parseWithConflict(str: string, fileLoc: string): ParseResult {
-  const variants = extractConflictVariants(str);
-  try {
-    return {type: 'merge', object: Object.assign({}, parse(variants[0], fileLoc), parse(variants[1], fileLoc))};
-  } catch (err) {
-    if (err instanceof SyntaxError) {
-      return {type: 'conflict', object: {}};
-    } else {
-      throw err;
-    }
-  }
-}
 
 export default function(str: string, fileLoc: string = 'lockfile'): ParseResult {
-  str = stripBOM(str);
-  return hasMergeConflicts(str) ? parseWithConflict(str, fileLoc) : {type: 'success', object: parse(str, fileLoc)};
+  return {type: 'success', object: parse(str, fileLoc)};
 }
